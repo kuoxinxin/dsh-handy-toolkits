@@ -1,0 +1,52 @@
+{
+  "name": "dsh-handy-toolkits",
+  "version": "0.1.0",
+  "description": "Whole-page zoom for the DeepSeek Harness Web GUI: keyboard shortcuts, a persisted level, and reset.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/client.js",
+    "lib/index.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": ">=0.2.0-rc.2"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "plugin",
+    "toolkit",
+    "zoom",
+    "ui"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kuoxinxin/dsh-handy-toolkits.git"
+  },
+  "homepage": "https://github.com/kuoxinxin/dsh-handy-toolkits#readme",
+  "bugs": {
+    "url": "https://github.com/kuoxinxin/dsh-handy-toolkits/issues"
+  }
+}
