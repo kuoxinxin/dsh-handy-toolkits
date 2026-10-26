@@ -7,13 +7,27 @@ const clientUrl = new URL("../lib/client.js", import.meta.url).href;
 /** A minimal window/document pair, enough for the bundle to run headless. */
 function createEnvironment() {
 	const listeners = new Map();
+	const documentListeners = new Map();
 	const store = new Map();
 	const style = new Map();
 	const timers = new Map();
 	const appended = [];
 	let timerId = 0;
 
+	const state = {
+		copied: "",
+		copyWorks: true,
+		clipboard: true,
+		clipboardText: "",
+		selection: null,
+		language: "en-US",
+		lang: ""
+	};
+
 	const documentElement = {
+		get lang() {
+			return state.lang;
+		},
 		style: {
 			setProperty: (name, value) => style.set(name, value),
 			removeProperty: (name) => style.delete(name),
@@ -36,15 +50,31 @@ function createEnvironment() {
 				id: "",
 				isConnected: false,
 				textContent: "",
+				value: "",
 				style: { cssText: "", opacity: "" },
 				attributes: {},
 				setAttribute(name, value) {
 					this.attributes[name] = value;
 				},
+				select() {},
 				remove() {
 					this.isConnected = false;
 				}
 			};
+		},
+		addEventListener(type, fn) {
+			if (!documentListeners.has(type)) documentListeners.set(type, []);
+			documentListeners.get(type).push(fn);
+		},
+		removeEventListener(type, fn) {
+			const list = documentListeners.get(type) ?? [];
+			const index = list.indexOf(fn);
+			if (index >= 0) list.splice(index, 1);
+		},
+		execCommand(command) {
+			if (command !== "copy") return false;
+			state.copied = window.getSelection?.()?.toString() ?? "";
+			return state.copyWorks;
 		}
 	};
 	const window = {
@@ -66,7 +96,8 @@ function createEnvironment() {
 		setTimeout(fn) {
 			timers.set(++timerId, fn);
 			return timerId;
-		}
+		},
+		getSelection: () => state.selection
 	};
 	window.window = window;
 	window.document = document;
@@ -77,7 +108,22 @@ function createEnvironment() {
 	};
 	globalThis.window = window;
 	globalThis.document = document;
-	return { window, document, listeners, store, style, appended, timers };
+	Object.defineProperty(globalThis, "navigator", {
+		configurable: true,
+		value: {
+			language: state.language,
+			get clipboard() {
+				return state.clipboard
+					? {
+							async writeText(text) {
+								state.clipboardText = text;
+							}
+						}
+					: void 0;
+			}
+		}
+	});
+	return { window, document, listeners, documentListeners, store, style, appended, timers, state };
 }
 
 /** Fresh module instance per test: the bundle caches module state. */
@@ -107,16 +153,53 @@ function press(environment, code, options = {}) {
 	return event;
 }
 
+/** Dispatch one pointerup through the listeners the plugin installed. */
+function release(environment) {
+	const event = { type: "pointerup", target: null };
+	for (const fn of environment.documentListeners.get("pointerup") ?? []) fn(event);
+}
+
+/** A selection whose anchor element answers `closest()` like the real DOM. */
+function selectText(environment, text, { zone = "transcript", editable = false } = {}) {
+	const anchor = {
+		nodeType: 1,
+		isContentEditable: editable,
+		closest(selector) {
+			if (selector === "[data-dsh-handy-toolkits]") return null;
+			if (selector === "main") return null;
+			return zone === "transcript" ? { id: "transcript" } : null;
+		}
+	};
+	environment.state.selection = {
+		isCollapsed: text === "",
+		anchorNode: anchor,
+		toString: () => text
+	};
+	return anchor;
+}
+
 /** Mount the plugin and return its disposer. */
 function mount(environment, client) {
 	const disposers = [];
 	client.apply({
 		effect(callback, label) {
-			assert.equal(label, "dsh-handy-toolkits: shortcuts");
+			assert.match(label, /^dsh-handy-toolkits: /);
 			disposers.push(callback());
 		}
 	});
-	return disposers[0];
+	return () => {
+		for (const dispose of disposers) dispose();
+	};
+}
+
+/** Let the async clipboard write and the deferred pass finish. */
+async function settle(environment) {
+	for (let round = 0; round < 4; round += 1) {
+		const pending = [...environment.timers.values()];
+		environment.timers.clear();
+		for (const fn of pending) fn();
+		await new Promise((resolve) => setImmediate(resolve));
+	}
 }
 
 test("bundle registers the package and exports apply", async () => {
@@ -179,7 +262,7 @@ test("a corrupt stored level falls back to 100%", async () => {
 	assert.equal(environment.style.get("zoom"), undefined);
 });
 
-test("teardown restores 100%, detaches the listener and drops the toast", async () => {
+test("teardown restores 100%, detaches the listeners and drops the toast", async () => {
 	const environment = createEnvironment();
 	const client = await loadClient(environment);
 	const dispose = mount(environment, client);
@@ -188,5 +271,82 @@ test("teardown restores 100%, detaches the listener and drops the toast", async 
 	dispose();
 	assert.equal(environment.style.get("zoom"), undefined);
 	assert.equal((environment.listeners.get("keydown") ?? []).length, 0);
+	assert.equal((environment.documentListeners.get("pointerup") ?? []).length, 0);
 	assert.equal(environment.timers.size, 0);
+});
+
+test("a drag selection in the transcript is copied and confirmed", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	mount(environment, client);
+	selectText(environment, "Hello world");
+	release(environment);
+	await settle(environment);
+	assert.equal(environment.state.clipboardText, "Hello world");
+	assert.equal(environment.appended.at(-1).textContent, "Copied 11 characters");
+});
+
+test("the confirmation follows the document language", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	mount(environment, client);
+	environment.state.lang = "zh-CN";
+	selectText(environment, "你好，世界");
+	release(environment);
+	await settle(environment);
+	assert.equal(environment.state.clipboardText, "你好，世界");
+	assert.equal(environment.appended.at(-1).textContent, "已复制 5 个字符");
+});
+
+test("the execCommand fallback still copies when the clipboard API is absent", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	environment.state.clipboard = false;
+	mount(environment, client);
+	selectText(environment, "fallback text");
+	release(environment);
+	await settle(environment);
+	assert.equal(environment.state.copied, "fallback text");
+	assert.equal(environment.appended.at(-1).textContent, "Copied 13 characters");
+});
+
+test("an empty selection copies nothing", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	mount(environment, client);
+	selectText(environment, "");
+	release(environment);
+	await settle(environment);
+	assert.equal(environment.state.clipboardText, "");
+	assert.equal(environment.appended.length, 0);
+});
+
+test("selections inside the composer or outside the transcript are ignored", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	mount(environment, client);
+
+	selectText(environment, "composer text", { editable: true });
+	release(environment);
+	await settle(environment);
+	assert.equal(environment.state.clipboardText, "", "the composer owns its selection");
+
+	selectText(environment, "settings text", { zone: "elsewhere" });
+	release(environment);
+	await settle(environment);
+	assert.equal(environment.state.clipboardText, "", "outside the transcript nothing is copied");
+	assert.equal(environment.appended.length, 0);
+});
+
+test("a failed copy says so instead of claiming success", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	environment.state.clipboard = false;
+	environment.state.copyWorks = false;
+	mount(environment, client);
+	selectText(environment, "unreachable");
+	release(environment);
+	await settle(environment);
+	assert.equal(environment.state.clipboardText, "");
+	assert.match(environment.appended.at(-1).textContent, /^Copy failed/);
 });
