@@ -1,6 +1,6 @@
 {
   "name": "dsh-handy-toolkits",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Handy DeepSeek Harness GUI toolkits: whole-page zoom (Cmd/Ctrl + Shift + = / - / 0) and copy-on-select in the chat transcript.",
   "type": "module",
   "main": "lib/index.js",

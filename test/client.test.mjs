@@ -21,19 +21,55 @@ function createEnvironment() {
 		clipboardText: "",
 		selection: null,
 		language: "en-US",
-		lang: ""
+		lang: "",
+		// Visual (zoomed) pixels, as the browser reports them under CSS zoom.
+		visualRect: { x: 300, y: 100, width: 100, height: 40 },
+		innerWidth: 1440,
+		innerHeight: 900,
+		viewportWidth: 1440,
+		viewportHeight: 900,
+		rootClientWidth: 1440,
+		rootClientHeight: 900
 	};
 
-	const documentElement = {
-		get lang() {
-			return state.lang;
-		},
-		style: {
-			setProperty: (name, value) => style.set(name, value),
-			removeProperty: (name) => style.delete(name),
-			getPropertyValue: (name) => style.get(name) ?? ""
+	class DOMRect {
+		constructor(x, y, width, height) {
+			this.x = x;
+			this.y = y;
+			this.width = width;
+			this.height = height;
+			this.left = x;
+			this.top = y;
+			this.right = x + width;
+			this.bottom = y + height;
 		}
+	}
+	let documentElement;
+	class Element {
+		getBoundingClientRect() {
+			const rect = state.visualRect;
+			return new DOMRect(rect.x, rect.y, rect.width, rect.height);
+		}
+		get clientWidth() {
+			return this === documentElement ? state.rootClientWidth : 640;
+		}
+		get clientHeight() {
+			return this === documentElement ? state.rootClientHeight : 480;
+		}
+	}
+	globalThis.DOMRect = DOMRect;
+	globalThis.Element = Element;
+
+	documentElement = new Element();
+	documentElement.style = {
+		setProperty: (name, value) => style.set(name, value),
+		removeProperty: (name) => style.delete(name),
+		getPropertyValue: (name) => style.get(name) ?? ""
 	};
+	Object.defineProperty(documentElement, "lang", {
+		configurable: true,
+		get: () => state.lang
+	});
 	const body = {
 		appendChild(node) {
 			appended.push(node);
@@ -101,6 +137,19 @@ function createEnvironment() {
 	};
 	window.window = window;
 	window.document = document;
+	const viewport = {};
+	Object.defineProperties(viewport, {
+		width: { configurable: true, get: () => state.viewportWidth },
+		height: { configurable: true, get: () => state.viewportHeight }
+	});
+	Object.defineProperties(window, {
+		innerWidth: { configurable: true, get: () => state.innerWidth },
+		innerHeight: { configurable: true, get: () => state.innerHeight },
+		visualViewport: {
+			configurable: true,
+			get: () => viewport
+		}
+	});
 	window.__ModuleLoader__ = {
 		load(registration) {
 			window.entry = registration;
@@ -349,4 +398,89 @@ test("a failed copy says so instead of claiming success", async () => {
 	await settle(environment);
 	assert.equal(environment.state.clipboardText, "");
 	assert.match(environment.appended.at(-1).textContent, /^Copy failed/);
+});
+
+/** Measure the DOM the way the GUI's anchored panels measure it. */
+function measure(environment) {
+	const rect = new globalThis.Element().getBoundingClientRect();
+	return {
+		left: rect.left,
+		top: rect.top,
+		width: rect.width,
+		height: rect.height,
+		innerWidth: environment.window.innerWidth,
+		innerHeight: environment.window.innerHeight,
+		viewport: environment.window.visualViewport.width,
+		rootClient: environment.document.documentElement.clientWidth,
+		nestedClient: new globalThis.Element().clientWidth
+	};
+}
+
+test("at 100% the browser APIs are passed through untouched", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	mount(environment, client);
+	assert.deepEqual(measure(environment), {
+		left: 300,
+		top: 100,
+		width: 100,
+		height: 40,
+		innerWidth: 1440,
+		innerHeight: 900,
+		viewport: 1440,
+		rootClient: 1440,
+		nestedClient: 640
+	});
+});
+
+test("zooming reports layout pixels so anchored panels stay on their anchor", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	mount(environment, client);
+	press(environment, "Equal");
+	press(environment, "Equal");
+	press(environment, "Equal");
+	press(environment, "Equal");
+	press(environment, "Equal");
+	assert.equal(environment.style.get("zoom"), "1.5");
+	// The stub still answers with visual pixels: 300/1.5, 100/1.5, 100/1.5, 40/1.5.
+	const measured = measure(environment);
+	assert.equal(Math.round(measured.left * 100) / 100, 200);
+	assert.equal(Math.round(measured.top * 100) / 100, 66.67);
+	assert.equal(Math.round(measured.width * 100) / 100, 66.67);
+	assert.equal(Math.round(measured.height * 100) / 100, 26.67);
+	assert.equal(Math.round(measured.innerWidth), 960);
+	assert.equal(Math.round(measured.innerHeight), 600);
+	assert.equal(Math.round(measured.viewport), 960);
+	assert.equal(Math.round(measured.rootClient), 960, "the root reports the viewport");
+	assert.equal(measured.nestedClient, 640, "nested boxes are layout pixels already");
+});
+
+test("the shim keeps up with level changes and is undone at 100%", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	mount(environment, client);
+	press(environment, "Equal");
+	assert.equal(Math.round(measure(environment).innerWidth), Math.round(1440 / 1.1));
+	for (let i = 0; i < 4; i += 1) press(environment, "Equal");
+	assert.equal(environment.style.get("zoom"), "1.5");
+	assert.equal(Math.round(measure(environment).innerWidth), 960);
+	press(environment, "Digit0");
+	assert.equal(measure(environment).innerWidth, 1440, "reset drops the shim");
+	assert.equal(measure(environment).left, 300);
+});
+
+test("teardown removes every patched accessor", async () => {
+	const environment = createEnvironment();
+	const ElementProto = globalThis.Element.prototype;
+	const rectBefore = ElementProto.getBoundingClientRect;
+	const client = await loadClient(environment);
+	const dispose = mount(environment, client);
+	press(environment, "Equal");
+	assert.notEqual(ElementProto.getBoundingClientRect, rectBefore);
+	dispose();
+	assert.equal(ElementProto.getBoundingClientRect, rectBefore);
+	assert.equal(environment.window.innerWidth, 1440);
+	assert.equal(environment.window.visualViewport.width, 1440);
+	assert.equal(environment.style.get("zoom"), undefined);
 });

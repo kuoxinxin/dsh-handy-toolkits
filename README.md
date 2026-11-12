@@ -100,7 +100,7 @@ index for the Discover page, or a PR to `awesome-dsh-plugin`).
 ## Test
 
 ```sh
-npm test        # node --test: chords, persistence, clamping, copy, scope, teardown
+npm test        # node --test: chords, persistence, clamping, coordinate shim, copy, scope, teardown
 ```
 
 ## Verify
@@ -109,7 +109,10 @@ npm test        # node --test: chords, persistence, clamping, copy, scope, teard
 2. Press `Cmd/Ctrl + Shift + =` twice: the page (sidebar, transcript, buttons)
    grows, and the readout says `Page zoom 120%`.
 3. Quit and reopen: the level is still 120%.
-4. Drag across a reply in the transcript: a `已复制` / `Copied` readout appears
+4. At 150%, open a menu (the sidebar `More`, a model picker): it opens flush to
+   its trigger (`dx`/gap of a few px), and near the window edge it flips inside
+   instead of hanging off screen.
+5. Drag across a reply in the transcript: a `已复制` / `Copied` readout appears
    and `Cmd/Ctrl + V` elsewhere pastes that text.
 
 Screenshots from that check (headless Chromium, real GUI, 1440×900): `docs/zoom-100.png`,
@@ -130,6 +133,20 @@ Screenshots from that check (headless Chromium, real GUI, 1440×900): `docs/zoom
 - CSS `zoom` on the root scales layout, text, and hit-testing together in
   Chromium, so pointer coordinates stay correct — unlike a `transform: scale()`.
   Fixed-position surfaces scale with the root instead of detaching from it.
+- **Coordinate shim.** Painting is scaled, but the JavaScript coordinate space is
+  not: `getBoundingClientRect()`, `innerWidth`/`innerHeight` and
+  `visualViewport` keep reporting *visual* (zoomed) pixels, while `style.left`/
+  `top` and `event.clientX` stay in *layout* pixels. The GUI positions menus and
+  popovers with `getBoundingClientRect()` and writes those numbers to
+  `left`/`top`, so a bare `zoom` pushes every anchored surface `level ×` away
+  from its trigger (a menu 250 px below its button at 150%), and edge clamping
+  measured against the visual viewport lets menus hang off the window. While a
+  level other than 100% is active the toolkit divides the visual APIs by the
+  level — `Element.prototype.getBoundingClientRect`, the root's
+  `clientWidth`/`clientHeight`, `innerWidth`/`innerHeight`,
+  `visualViewport.width`/`height` — so the app measures and places in one space,
+  the same one native page zoom exposes. Every patch is undone at 100% and on
+  teardown.
 
 ## Troubleshooting
 
@@ -137,6 +154,10 @@ Screenshots from that check (headless Chromium, real GUI, 1440×900): `docs/zoom
   check 设置 → 插件 for a load error, then quit and reopen the app.
 - **`Page zoom` readout appears but nothing grows** — another plugin sets a
   `zoom` on the root element; only one can own it.
+- **A menu lands far from its button** — this is the pre-0.2.1 bug: CSS `zoom`
+  was applied without the coordinate shim, so the app placed the menu with visual
+  pixels but in a layout-pixel slot. Upgrade to 0.2.1 (or reset to 100% and zoom
+  again so the shim installs).
 - **Text looks blurry** — CSS `zoom` re-rasterizes text, but fractional levels
   (110%, 130%) can look softer than 100% or 150%. Use the reset chord to return
   to a crisp 100%.
