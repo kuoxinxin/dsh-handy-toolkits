@@ -20,6 +20,11 @@ function createEnvironment() {
 		copyWorks: true,
 		clipboard: true,
 		clipboardText: "",
+		clipboardItems: [],
+		clipboardRejects: false,
+		canvases: [],
+		drawn: [],
+		pngBlob: new Blob(["png"], { type: "image/png" }),
 		selection: null,
 		language: "en-US",
 		lang: "",
@@ -94,6 +99,25 @@ function createEnvironment() {
 		body,
 		head,
 		createElement(tag) {
+			if (String(tag).toLowerCase() === "canvas") {
+				const canvas = {
+					tagName: "CANVAS",
+					width: 0,
+					height: 0,
+					getContext: () => ({
+						fillStyle: "",
+						fillRect() {},
+						drawImage(...args) {
+							state.drawn.push(args);
+						}
+					}),
+					toBlob(callback) {
+						callback(state.pngBlob);
+					}
+				};
+				state.canvases.push(canvas);
+				return canvas;
+			}
 			return {
 				tagName: String(tag).toUpperCase(),
 				id: "",
@@ -160,6 +184,17 @@ function createEnvironment() {
 			this.detail = init.detail;
 		}
 	};
+	globalThis.ClipboardItem = class ClipboardItem {
+		constructor(items) {
+			this.items = items;
+		}
+	};
+	globalThis.Image = class Image {
+		set src(value) {
+			this._src = value;
+			queueMicrotask(() => this.onload?.());
+		}
+	};
 	const viewport = {};
 	Object.defineProperties(viewport, {
 		width: { configurable: true, get: () => state.viewportWidth },
@@ -189,6 +224,10 @@ function createEnvironment() {
 					? {
 							async writeText(text) {
 								state.clipboardText = text;
+							},
+							async write(items) {
+								if (state.clipboardRejects) throw new Error("clipboard rejected the image");
+								state.clipboardItems.push(...items);
 							}
 						}
 					: void 0;
@@ -296,9 +335,9 @@ function createFakeEngine(overrides = {}) {
 			calls.load += 1;
 			return mermaidApi;
 		},
-		async render(engine, code, theme) {
+		async render(engine, code, theme, options = {}) {
 			assert.equal(engine, mermaidApi, "the layer hands the loaded engine back");
-			calls.render.push({ code, theme });
+			calls.render.push({ code, theme, ...options });
 			return `<svg data-theme="${theme}">${code}</svg>`;
 		},
 		...overrides
@@ -465,6 +504,55 @@ test("zooming keeps the anchor point fixed", async () => {
 	const clamped = client.__test.zoomAroundPoint({ scale: 8, x: 0, y: 0 }, 2, 10, 10);
 	assert.deepEqual(clamped, { scale: 8, x: 0, y: 0 });
 	assert.equal(client.__test.formatScale(1.25), "125%");
+});
+
+test("copying the source writes a fenced mermaid block", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	assert.equal(await client.__test.copyDiagramSource("graph TD; A-->B"), "source");
+	assert.equal(environment.state.clipboardText, "```mermaid\ngraph TD; A-->B\n```");
+});
+
+test("the PNG path re-renders without html labels and writes one image item", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	const engine = createFakeEngine();
+	client.__test.setEngine(engine);
+	assert.equal(await client.__test.copyDiagramPng({ code: "graph TD; A-->B", theme: "dark" }), "png");
+	assert.equal(engine.calls.render.length, 1);
+	assert.equal(engine.calls.render[0].htmlLabels, false);
+	const [item] = environment.state.clipboardItems;
+	assert.ok(item.items["image/png"]);
+});
+
+test("SVG copy falls back to the source when the clipboard rejects images", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	environment.state.clipboardRejects = true;
+	const result = await client.__test.copyDiagramSvg({ svg: "<svg/>", code: "graph TD; A-->B" });
+	assert.equal(result, "source");
+	assert.equal(environment.state.clipboardText, "```mermaid\ngraph TD; A-->B\n```");
+});
+
+test("a huge diagram is rasterised at a capped pixel width", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	client.__test.setEngine(
+		createFakeEngine({
+			async render() {
+				return '<svg viewBox="0 0 8000 6000"></svg>';
+			}
+		})
+	);
+	await client.__test.copyDiagramPng({ code: "graph TD; A-->B", theme: "light" });
+	assert.ok(environment.state.canvases.at(-1).width <= 4096);
+});
+
+test("a missing clipboard raises instead of failing silently", async () => {
+	const environment = createEnvironment();
+	environment.state.clipboard = false;
+	const client = await loadClient(environment);
+	await assert.rejects(() => client.__test.copyDiagramSource("graph TD; A-->B"), /clipboard unavailable/);
 });
 
 test("the chords do not steal the built-in font-size commands", async () => {
