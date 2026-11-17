@@ -171,8 +171,9 @@ function createEnvironment() {
 	});
 	const head = new FakeElement("head");
 	head.appendChild = (node) => {
-		appended.push(node);
+		node.parentNode = head;
 		node.isConnected = true;
+		head.children.push(node);
 		return node;
 	};
 	const document = {
@@ -671,6 +672,93 @@ test("a page zoom change resizes the overlay instead of restarting it", async ()
 	handle.close();
 });
 
+test("the fence toolbar opens the viewer with the diagram it shows", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	const opened = [];
+	client.__test.setViewer({ ...client.__test.defaultViewer, open: (options) => opened.push(options) });
+	const engine = createFakeEngine();
+	const { instance } = await mountFence(environment, client, { code: "graph TD; A-->B", streaming: false, children: "CODE" }, engine);
+	const button = findClass(instance.render(), "dsh-handy-toolkits-mermaid-expand");
+	button.props.onClick({ stopPropagation() {} });
+	assert.equal(opened.length, 1);
+	assert.equal(opened[0].code, "graph TD; A-->B");
+	assert.match(opened[0].svg, /^<svg/);
+	assert.equal(opened[0].theme, "light");
+});
+
+test("the copy menu shows one toast per format and reports failures", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	const calls = [];
+	client.__test.setViewer({
+		open() {},
+		copyPng: async () => (calls.push("png"), "png"),
+		copySvg: async () => {
+			calls.push("svg");
+			throw new Error("no image support");
+		},
+		copySource: async () => (calls.push("source"), "source")
+	});
+	const engine = createFakeEngine();
+	const { instance } = await mountFence(environment, client, { code: "graph TD; A-->B", streaming: false, children: "CODE" }, engine);
+	findClass(instance.render(), "dsh-handy-toolkits-mermaid-copy").props.onClick({ stopPropagation() {} });
+	await flush();
+	const menu = instance.render();
+	const toast = () => environment.document.body.children.find((node) => node.id === "dsh-handy-toolkits-toast");
+	findClass(menu, "dsh-handy-toolkits-mermaid-copy-png").props.onClick({ stopPropagation() {} });
+	await settle(environment);
+	assert.match(toast().textContent, /Copied PNG/);
+	await openMenu(environment, instance);
+	findClass(instance.render(), "dsh-handy-toolkits-mermaid-copy-svg").props.onClick({ stopPropagation() {} });
+	await settle(environment);
+	assert.match(toast().textContent, /Copy failed: no image support/);
+	await openMenu(environment, instance);
+	findClass(instance.render(), "dsh-handy-toolkits-mermaid-copy-source").props.onClick({ stopPropagation() {} });
+	await settle(environment);
+	assert.match(toast().textContent, /Copied source/);
+	assert.deepEqual(calls, ["png", "svg", "source"]);
+});
+
+test("a failed copy says why and leaves the diagram alone", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	client.__test.setViewer({
+		open() {},
+		copyPng: async () => {
+			throw new Error("clipboard unavailable");
+		},
+		copySvg: async () => "svg",
+		copySource: async () => "source"
+	});
+	const engine = createFakeEngine();
+	const { instance } = await mountFence(environment, client, { code: "graph TD; A-->B", streaming: false, children: "CODE" }, engine);
+	const tree = instance.render();
+	findClass(tree, "dsh-handy-toolkits-mermaid-copy").props.onClick({ stopPropagation() {} });
+	await flush();
+	findClass(instance.render(), "dsh-handy-toolkits-mermaid-copy-png").props.onClick({ stopPropagation() {} });
+	await settle(environment);
+	const toast = environment.document.body.children.find((node) => node.id === "dsh-handy-toolkits-toast");
+	assert.match(toast.textContent, /Copy failed: clipboard unavailable/);
+	assert.ok(findClass(instance.render(), "dsh-handy-toolkits-mermaid"), "the diagram is still on screen");
+});
+
+test("clicking the diagram opens the viewer but selecting text does not", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	const opened = [];
+	client.__test.setViewer({ ...client.__test.defaultViewer, open: (options) => opened.push(options) });
+	const engine = createFakeEngine();
+	const { instance } = await mountFence(environment, client, { code: "graph TD; A-->B", streaming: false, children: "CODE" }, engine);
+	const host = findClass(instance.render(), "dsh-handy-toolkits-mermaid");
+	environment.state.selection = { toString: () => "some borrowed text" };
+	host.props.onClick({ stopPropagation() {} });
+	assert.equal(opened.length, 0, "a text selection borrows the click");
+	environment.state.selection = { toString: () => "" };
+	host.props.onClick({ stopPropagation() {} });
+	assert.equal(opened.length, 1);
+});
+
 test("the chords do not steal the built-in font-size commands", async () => {
 	const environment = createEnvironment();
 	const client = await loadClient(environment);
@@ -884,6 +972,23 @@ async function flush() {
 }
 
 /** Read the text a rendered tree would show. */
+/** The copy menu closes after one pick, so every format reopens it. */
+async function openMenu(environment, instance) {
+	findClass(instance.render(), "dsh-handy-toolkits-mermaid-copy").props.onClick({ stopPropagation() {} });
+	await flush();
+}
+
+function findClass(node, className) {
+	if (node === undefined || node === null || typeof node !== "object") return undefined;
+	const names = String(node.props?.className ?? "").split(/\s+/);
+	if (names.includes(className)) return node;
+	for (const child of node.props?.children ?? []) {
+		const found = findClass(child, className);
+		if (found !== undefined) return found;
+	}
+	return undefined;
+}
+
 function actionOf(node, action) {
 	if (node === undefined || node === null) return undefined;
 	if (node.attributes?.["data-viewer-action"] === action) return node;
@@ -952,9 +1057,9 @@ test("a finished fence renders into an SVG through the engine", async () => {
 		{ code: "graph TD; A-->B", streaming: false, children: "CODE BLOCK" },
 		engine
 	);
-	const tree = instance.render();
-	assert.match(tree.props.dangerouslySetInnerHTML.__html, /^<svg data-theme="light">/);
-	assert.match(tree.props.dangerouslySetInnerHTML.__html, /graph TD/);
+	const host = findClass(instance.render(), "dsh-handy-toolkits-mermaid");
+	assert.match(host.props.dangerouslySetInnerHTML.__html, /^<svg data-theme="light">/);
+	assert.match(host.props.dangerouslySetInnerHTML.__html, /graph TD/);
 	assert.deepEqual(engine.calls.render, [{ code: "graph TD; A-->B", theme: "light" }]);
 });
 
@@ -1006,7 +1111,7 @@ test("a fence renders when its stream ends", async () => {
 	instance.props = { ...props, streaming: false };
 	instance.componentDidUpdate(props, previousState);
 	await flush();
-	assert.match(instance.render().props.dangerouslySetInnerHTML.__html, /^<svg/);
+	assert.match(findClass(instance.render(), "dsh-handy-toolkits-mermaid").props.dangerouslySetInnerHTML.__html, /^<svg/);
 });
 
 test("switching the app to dark mode redraws the diagram dark", async () => {
@@ -1021,7 +1126,7 @@ test("switching the app to dark mode redraws the diagram dark", async () => {
 	);
 	assert.equal(engine.calls.render.at(-1).theme, "light");
 	setTheme(environment, true);
-	const whilePending = instance.render();
+	const whilePending = findClass(instance.render(), "dsh-handy-toolkits-mermaid");
 	assert.match(
 		whilePending.props.dangerouslySetInnerHTML.__html,
 		/data-theme="light"/,
@@ -1029,7 +1134,7 @@ test("switching the app to dark mode redraws the diagram dark", async () => {
 	);
 	await flush();
 	assert.equal(engine.calls.render.at(-1).theme, "dark");
-	assert.match(instance.render().props.dangerouslySetInnerHTML.__html, /data-theme="dark"/);
+	assert.match(findClass(instance.render(), "dsh-handy-toolkits-mermaid").props.dangerouslySetInnerHTML.__html, /data-theme="dark"/);
 });
 
 test("unmounting the diagram stops watching the theme", async () => {
