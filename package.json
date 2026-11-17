@@ -1,59 +1,59 @@
 {
-  "name": "dsh-handy-toolkits",
-  "version": "0.3.0",
-  "description": "Handy DeepSeek Harness GUI toolkits: whole-page zoom (Cmd/Ctrl + Shift + = / - / 0), copy-on-select in the chat transcript, and Mermaid diagrams rendered inline from ```mermaid fences.",
-  "type": "module",
-  "main": "lib/index.js",
-  "exports": {
-    ".": "./lib/index.js",
-    "./client": "./lib/client.js",
-    "./package.json": "./package.json"
-  },
-  "files": [
-    "lib/client.js",
-    "lib/index.js",
-    "cordis.patch.yml",
-    "README.md",
-    "LICENSE",
-    "scripts/vendor-mermaid.mjs"
-  ],
-  "engines": {
-    "node": "^22.19.0 || >=24.0.0",
-    "dsh": ">=0.2.0-rc.2"
-  },
-  "keywords": [
-    "dsh",
-    "deepseek-harness",
-    "cordis",
-    "plugin",
-    "toolkit",
-    "zoom",
-    "mermaid",
-    "diagram",
-    "markdown",
-    "ui"
-  ],
-  "scripts": {
-    "test": "node --test"
-  },
-  "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "platform": "web",
-      "inject": [
-        "slots"
-      ]
-    }
-  },
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/kuoxinxin/dsh-handy-toolkits.git"
-  },
-  "homepage": "https://github.com/kuoxinxin/dsh-handy-toolkits#readme",
-  "bugs": {
-    "url": "https://github.com/kuoxinxin/dsh-handy-toolkits/issues"
-  }
+	"name": "dsh-handy-toolkits",
+	"version": "0.4.0",
+	"description": "Handy DeepSeek Harness GUI toolkits: whole-page zoom (Cmd/Ctrl + Shift + = / - / 0), copy-on-select in the chat transcript, and Mermaid diagrams rendered inline with a full-screen viewer and PNG/SVG/source copy.",
+	"type": "module",
+	"main": "lib/index.js",
+	"exports": {
+		".": "./lib/index.js",
+		"./client": "./lib/client.js",
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"lib/client.js",
+		"lib/index.js",
+		"cordis.patch.yml",
+		"README.md",
+		"LICENSE",
+		"scripts/vendor-mermaid.mjs"
+	],
+	"engines": {
+		"node": "^22.19.0 || >=24.0.0",
+		"dsh": ">=0.2.0-rc.2"
+	},
+	"keywords": [
+		"dsh",
+		"deepseek-harness",
+		"cordis",
+		"plugin",
+		"toolkit",
+		"zoom",
+		"mermaid",
+		"diagram",
+		"markdown",
+		"ui"
+	],
+	"scripts": {
+		"test": "node --test"
+	},
+	"dsh": {
+		"bundle": {
+			"patch": "./cordis.patch.yml"
+		},
+		"client": {
+			"platform": "web",
+			"inject": [
+				"slots"
+			]
+		}
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/kuoxinxin/dsh-handy-toolkits.git"
+	},
+	"homepage": "https://github.com/kuoxinxin/dsh-handy-toolkits#readme",
+	"bugs": {
+		"url": "https://github.com/kuoxinxin/dsh-handy-toolkits/issues"
+	}
 }

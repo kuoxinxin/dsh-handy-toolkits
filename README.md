@@ -73,6 +73,41 @@ graph TD
   wire, cached immutably per revision) and the browser only inflates and runs it
   when the first `mermaid` fence appears.
 
+### Viewing and copying
+
+Hover a diagram (or tab onto it) and two actions appear in its corner:
+
+- **Copy ▾** — `PNG`, `SVG`, or the mermaid source. PNG and SVG are written to the
+  clipboard as images, so a paste into a document, a chat, or a slide deck lands
+  as a picture; the source is copied in a fenced block so it can be edited again.
+  A readout confirms which format went out (`已复制 PNG` / `Copied PNG`), and says
+  why when the browser refuses the clipboard.
+- **Full screen** — opens the diagram in a viewer over the app: `+` / `−` step the
+  scale, the percentage button returns to 100%, `适应` fits the window, the wheel
+  zooms around the pointer, dragging pans, a double-click toggles fit and 100%,
+  and `Esc` (or a click beside the diagram) closes it.
+
+Details worth knowing:
+
+- **100% means one diagram pixel per app pixel at the current page zoom.** With
+  the page at 150% a 100% viewer shows the diagram at the size the transcript
+  draws it. The viewer is a real overlay, not a zoomed copy, so it follows the
+  page-zoom chords while it is open: the window resizes and the diagram is
+  re-fitted around the same point.
+- The scale runs from 25% to 800%. Opening a small diagram never enlarges it
+  past 100%, so "full screen" on a two-node graph does not fill the monitor with
+  two giant boxes.
+- A copy uses the diagram as it looked when the overlay opened — the theme is
+  captured at open time, so toggling light/dark in the app does not change the
+  image you are about to paste. Close and reopen to pick up a new theme.
+- PNG is rasterised at 2× and needs the labels drawn as SVG text, so the copy
+  re-renders the same source once with `htmlLabels: false`: the SVG shown in the
+  transcript uses `<foreignObject>` labels, which a canvas silently drops. The
+  background is filled with the theme colour so a dark diagram stays readable on
+  a light page.
+- Copying needs a focused window; if the browser rejects the clipboard the
+  readout says so and the diagram itself is untouched.
+
 ## Install
 
 Quit DeepSeek Harness completely (`Cmd + Q`), then:
@@ -237,3 +272,18 @@ Screenshots from that check (headless Chromium, real GUI, 1440×900): `docs/zoom
 - **Content runs off the right edge** — this is real zoom, not a smaller layout
   viewport: at 200% on a narrow window the UI legitimately needs more room. Zoom
   out, widen the window, or hide the sidebar.
+- **No Copy / Full screen buttons on a diagram** — the actions appear on hover or
+  keyboard focus; if they never show, the layer is the older 0.3.0 build (check
+  the version in 设置 → 插件) or the SVG fell back to a code block because the
+  diagram failed to parse.
+- **`Copy failed: Document is not focused`** — the window lost focus (another app,
+  a headless session). Click the app window and copy again. The same message
+  appears for any clipboard rejection, including a denied permission.
+- **A pasted PNG has no labels** — the raster path re-renders with
+  `htmlLabels: false`; if labels are still missing the diagram probably draws text
+  via a foreign object the engine cannot flatten (some `mindmap` layouts). Copy
+  SVG instead — it keeps the text as real text.
+- **The full-screen viewer is offset to one side under page zoom** — the viewer
+  measures the window in layout pixels and never calls `getBoundingClientRect`, so
+  this means it was built without the coordinate shim (page zoom below 0.2.1) or
+  another plugin resized the root. Reset page zoom to 100% and reopen the viewer.
