@@ -442,6 +442,31 @@ test("page zoom publishes its level on every change", async () => {
 	dispose();
 });
 
+test("viewer scales clamp to the supported range", async () => {
+	const client = await loadClient(createEnvironment());
+	assert.equal(client.__test.clampViewerScale(0.1), 0.25);
+	assert.equal(client.__test.clampViewerScale(20), 8);
+	assert.equal(client.__test.clampViewerScale(1.23456), 1.235);
+	assert.equal(client.__test.clampViewerScale(Number.NaN), 1);
+});
+
+test("fit never magnifies and floors at the minimum scale", async () => {
+	const client = await loadClient(createEnvironment());
+	assert.equal(client.__test.fitViewerScale(1200, 800, 600, 400), 1);
+	assert.equal(client.__test.fitViewerScale(400, 300, 800, 600), 0.5);
+	assert.equal(client.__test.fitViewerScale(400, 300, 4000, 3000), 0.25);
+	assert.equal(client.__test.fitViewerScale(1200, 800, 0, 0), 1);
+});
+
+test("zooming keeps the anchor point fixed", async () => {
+	const client = await loadClient(createEnvironment());
+	const state = { scale: 1, x: 100, y: 50 };
+	assert.deepEqual(client.__test.zoomAroundPoint(state, 2, 200, 150), { scale: 2, x: 0, y: -50 });
+	const clamped = client.__test.zoomAroundPoint({ scale: 8, x: 0, y: 0 }, 2, 10, 10);
+	assert.deepEqual(clamped, { scale: 8, x: 0, y: 0 });
+	assert.equal(client.__test.formatScale(1.25), "125%");
+});
+
 test("the chords do not steal the built-in font-size commands", async () => {
 	const environment = createEnvironment();
 	const client = await loadClient(environment);
