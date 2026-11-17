@@ -93,7 +93,9 @@ Details worth knowing:
   the page at 150% a 100% viewer shows the diagram at the size the transcript
   draws it. The viewer is a real overlay, not a zoomed copy, so it follows the
   page-zoom chords while it is open: the window resizes and the diagram is
-  re-fitted around the same point.
+  re-centred at the same scale. Keys with a platform modifier always belong to
+  the app, so `Cmd/Ctrl + Shift + =` still zooms the page while the viewer is up;
+  plain `+` / `-` / `0` scale the diagram.
 - The scale runs from 25% to 800%. Opening a small diagram never enlarges it
   past 100%, so "full screen" on a two-node graph does not fill the monitor with
   two giant boxes.

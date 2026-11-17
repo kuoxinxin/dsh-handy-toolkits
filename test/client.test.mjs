@@ -146,6 +146,12 @@ function createEnvironment() {
 		removeAttribute(name) {
 			delete this.attributes[name];
 		}
+		focus() {
+			document.activeElement = this;
+		}
+		blur() {
+			if (document.activeElement === this) document.activeElement = null;
+		}
 		remove() {
 			if (this.parentNode !== null) this.parentNode.removeChild(this);
 			this.isConnected = false;
@@ -178,6 +184,7 @@ function createEnvironment() {
 		return node;
 	};
 	const document = {
+		activeElement: null,
 		documentElement,
 		body,
 		head,
@@ -662,6 +669,35 @@ test("wheel zoom keeps the pointer anchored", async () => {
 	assert.equal((100 - after.x) / after.scale, (100 - before.x) / before.scale, "the point under the pointer stays put");
 	assert.equal((100 - after.y) / after.scale, (100 - before.y) / before.scale);
 	handle.close();
+});
+
+test("the viewer ignores the app chords and stops the keys it handles", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	mount(environment, client);
+	const handle = client.__test.openViewer({ svg: '<svg viewBox="0 0 400 300"></svg>', code: "graph TD; A-->B", theme: "light" });
+	environment.window.dispatchEvent({ type: "keydown", key: "=", metaKey: true, shiftKey: true });
+	environment.window.dispatchEvent({ type: "keydown", key: "=", ctrlKey: true });
+	environment.window.dispatchEvent({ type: "keydown", key: "-", altKey: true });
+	assert.equal(handle.state().scale, 1, "chords that belong to the app leave the diagram alone");
+	const stops = [];
+	environment.window.dispatchEvent({ type: "keydown", key: "+", stopPropagation: () => stops.push("stop") });
+	assert.equal(handle.state().scale, 1.25);
+	assert.deepEqual(stops, ["stop"]);
+	handle.close();
+});
+
+test("the viewer takes the focus and gives it back", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	mount(environment, client);
+	const trigger = environment.document.createElement("button");
+	environment.document.body.appendChild(trigger);
+	trigger.focus();
+	const handle = client.__test.openViewer({ svg: '<svg viewBox="0 0 400 300"></svg>', code: "graph TD; A-->B", theme: "light" });
+	assert.equal(environment.document.activeElement, handle.overlay);
+	handle.close();
+	assert.equal(environment.document.activeElement, trigger);
 });
 
 test("a page zoom change resizes the overlay instead of restarting it", async () => {
