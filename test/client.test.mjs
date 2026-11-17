@@ -24,6 +24,7 @@ function createEnvironment() {
 		clipboardRejects: false,
 		canvases: [],
 		drawn: [],
+		fills: [],
 		pngBlob: new Blob(["png"], { type: "image/png" }),
 		selection: null,
 		language: "en-US",
@@ -186,13 +187,18 @@ function createEnvironment() {
 					tagName: "CANVAS",
 					width: 0,
 					height: 0,
-					getContext: () => ({
-						fillStyle: "",
-						fillRect() {},
-						drawImage(...args) {
-							state.drawn.push(args);
-						}
-					}),
+					getContext: () => {
+						const context = {
+							fillStyle: "",
+							fillRect() {
+								state.fills.push({ fillStyle: context.fillStyle });
+							},
+							drawImage(...args) {
+								state.drawn.push(args);
+							}
+						};
+						return context;
+					},
 					toBlob(callback) {
 						callback(state.pngBlob);
 					}
@@ -685,6 +691,37 @@ test("the fence toolbar opens the viewer with the diagram it shows", async () =>
 	assert.equal(opened[0].code, "graph TD; A-->B");
 	assert.match(opened[0].svg, /^<svg/);
 	assert.equal(opened[0].theme, "light");
+});
+
+test("an open viewer keeps its own diagram when the fence changes", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	mount(environment, client);
+	const engine = createFakeEngine();
+	const { instance } = await mountFence(environment, client, { code: "graph TD; A-->B", streaming: false, children: "CODE" }, engine);
+	const handle = client.__test.openViewer({ svg: instance.state.svg, code: instance.props.code, theme: instance.state.theme });
+	const surface = handle.stage.children.at(-1);
+	const shown = surface.innerHTML;
+	const previous = instance.props;
+	instance.props = { ...previous, code: "graph LR; X-->Y" };
+	instance.componentDidUpdate(previous, instance.state);
+	await settle(environment);
+	assert.equal(surface.innerHTML, shown, "the viewer keeps the snapshot it opened with");
+	assert.equal(handle.overlay.isConnected, true);
+	assert.equal(handle.code, "graph TD; A-->B");
+});
+
+test("the viewer keeps the theme it opened with", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	mount(environment, client);
+	client.__test.setEngine(createFakeEngine());
+	const handle = client.__test.openViewer({ svg: '<svg viewBox="0 0 10 10"></svg>', code: "graph TD; A-->B", theme: "light" });
+	setTheme(environment, true);
+	await settle(environment);
+	assert.equal(handle.overlay.attributes["data-viewer-theme"], "light");
+	await client.__test.copyDiagramPng({ code: handle.code, theme: handle.theme });
+	assert.equal(environment.state.fills.at(-1).fillStyle, "#ffffff");
 });
 
 test("the copy menu shows one toast per format and reports failures", async () => {
