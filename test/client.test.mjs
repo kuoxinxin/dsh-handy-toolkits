@@ -148,8 +148,18 @@ function createEnvironment() {
 		},
 		getSelection: () => state.selection
 	};
+	window.dispatchEvent = (event) => {
+		for (const fn of [...(listeners.get(event.type) ?? [])]) fn(event);
+		return true;
+	};
 	window.window = window;
 	window.document = document;
+	globalThis.CustomEvent = class CustomEvent {
+		constructor(type, init = {}) {
+			this.type = type;
+			this.detail = init.detail;
+		}
+	};
 	const viewport = {};
 	Object.defineProperties(viewport, {
 		width: { configurable: true, get: () => state.viewportWidth },
@@ -413,6 +423,23 @@ test("chords scale the root and persist the level", async () => {
 	press(environment, "Digit0");
 	assert.equal(environment.style.get("zoom"), undefined, "reset removes the property");
 	assert.equal(environment.store.has("dsh-handy-toolkits:level"), false, "100% is not persisted");
+});
+
+test("page zoom publishes its level on every change", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	const seen = [];
+	environment.window.addEventListener("dsh-handy-toolkits:zoom", (event) => seen.push(event.detail));
+	const dispose = mount(environment, client);
+	assert.equal(client.__test.pageZoomLevel(), 1);
+	press(environment, "Equal");
+	assert.equal(client.__test.pageZoomLevel(), 1.1);
+	press(environment, "Equal");
+	assert.equal(client.__test.pageZoomLevel(), 1.2);
+	press(environment, "Digit0");
+	assert.equal(client.__test.pageZoomLevel(), 1);
+	assert.deepEqual(seen, [1, 1.1, 1.2, 1]);
+	dispose();
 });
 
 test("the chords do not steal the built-in font-size commands", async () => {
