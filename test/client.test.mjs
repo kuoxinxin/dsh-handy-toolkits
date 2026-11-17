@@ -78,12 +78,88 @@ function createEnvironment() {
 	});
 	/** Attribute bag shared by `body` and `head`; the theme rides on a body attribute. */
 	const attributes = new Map();
-	const body = {
+	class FakeElement {
+		constructor(tag) {
+			this.tagName = String(tag).toUpperCase();
+			this.id = "";
+			this.isConnected = false;
+			this.textContent = "";
+			this.value = "";
+			this.innerHTML = "";
+			this.className = "";
+			this.style = { cssText: "", opacity: "" };
+			this.attributes = {};
+			this.children = [];
+			this.parentNode = null;
+			this.handlers = new Map();
+			this.classList = {
+				add: (...names) => {
+					const set = new Set(this.className.split(/\s+/).filter(Boolean));
+					for (const name of names) set.add(name);
+					this.className = [...set].join(" ");
+				},
+				remove: (...names) => {
+					const set = new Set(this.className.split(/\s+/).filter(Boolean));
+					for (const name of names) set.delete(name);
+					this.className = [...set].join(" ");
+				},
+				contains: (name) => this.className.split(/\s+/).includes(name)
+			};
+		}
 		appendChild(node) {
-			appended.push(node);
+			node.parentNode = this;
 			node.isConnected = true;
+			this.children.push(node);
 			return node;
-		},
+		}
+		removeChild(node) {
+			const index = this.children.indexOf(node);
+			if (index >= 0) this.children.splice(index, 1);
+			node.parentNode = null;
+			node.isConnected = false;
+			return node;
+		}
+		addEventListener(type, fn) {
+			if (!this.handlers.has(type)) this.handlers.set(type, []);
+			this.handlers.get(type).push(fn);
+		}
+		removeEventListener(type, fn) {
+			const list = this.handlers.get(type) ?? [];
+			const index = list.indexOf(fn);
+			if (index >= 0) list.splice(index, 1);
+		}
+		dispatchEvent(type, event = {}) {
+			const payload = {
+				target: this,
+				currentTarget: this,
+				preventDefault() {},
+				stopPropagation() {},
+				...event
+			};
+			for (const fn of [...(this.handlers.get(type) ?? [])]) fn(payload);
+			return true;
+		}
+		setAttribute(name, value) {
+			this.attributes[name] = String(value);
+		}
+		removeAttribute(name) {
+			delete this.attributes[name];
+		}
+		remove() {
+			if (this.parentNode !== null) this.parentNode.removeChild(this);
+			this.isConnected = false;
+		}
+		select() {}
+		setPointerCapture() {}
+		releasePointerCapture() {}
+	}
+	const body = new FakeElement("body");
+	body.isConnected = true;
+	body.appendChild = ((appendChild) => (node) => {
+		appended.push(node);
+		return appendChild.call(body, node);
+	})(FakeElement.prototype.appendChild);
+	Object.assign(body, {
 		hasAttribute: (name) => attributes.has(name),
 		getAttribute: (name) => attributes.get(name) ?? null,
 		setAttribute(name, value) {
@@ -92,8 +168,13 @@ function createEnvironment() {
 		removeAttribute(name) {
 			attributes.delete(name);
 		}
+	});
+	const head = new FakeElement("head");
+	head.appendChild = (node) => {
+		appended.push(node);
+		node.isConnected = true;
+		return node;
 	};
-	const head = { ...body, appendChild: body.appendChild };
 	const document = {
 		documentElement,
 		body,
@@ -118,22 +199,7 @@ function createEnvironment() {
 				state.canvases.push(canvas);
 				return canvas;
 			}
-			return {
-				tagName: String(tag).toUpperCase(),
-				id: "",
-				isConnected: false,
-				textContent: "",
-				value: "",
-				style: { cssText: "", opacity: "" },
-				attributes: {},
-				setAttribute(name, value) {
-					this.attributes[name] = value;
-				},
-				select() {},
-				remove() {
-					this.isConnected = false;
-				}
-			};
+			return new FakeElement(tag);
 		},
 		addEventListener(type, fn) {
 			if (!documentListeners.has(type)) documentListeners.set(type, []);
@@ -555,6 +621,56 @@ test("a missing clipboard raises instead of failing silently", async () => {
 	await assert.rejects(() => client.__test.copyDiagramSource("graph TD; A-->B"), /clipboard unavailable/);
 });
 
+test("openViewer covers the window, wires the buttons and closes on Escape", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	mount(environment, client);
+	const handle = client.__test.openViewer({ svg: '<svg viewBox="0 0 400 300"></svg>', code: "graph TD; A-->B", theme: "light" });
+	const overlay = environment.document.body.children.at(-1);
+	assert.equal(overlay.attributes["data-dsh-handy-toolkits-viewer"], "");
+	assert.equal(overlay.attributes["data-viewer-theme"], "light");
+	assert.equal(overlay.style.width, "1440px");
+	assert.equal(overlay.style.height, "900px");
+	assert.equal(actionOf(overlay, "scale").textContent, "100%");
+	actionOf(overlay, "in").dispatchEvent("click", {});
+	assert.equal(actionOf(overlay, "scale").textContent, "125%");
+	actionOf(overlay, "fit").dispatchEvent("click", {});
+	assert.equal(actionOf(overlay, "scale").textContent, "100%");
+	environment.window.dispatchEvent({ type: "keydown", key: "Escape" });
+	assert.equal(overlay.isConnected, false);
+	handle.close();
+	assert.equal(overlay.isConnected, false);
+});
+
+test("wheel zoom keeps the pointer anchored", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	mount(environment, client);
+	const handle = client.__test.openViewer({ svg: '<svg viewBox="0 0 400 300"></svg>', code: "graph TD; A-->B", theme: "light" });
+	const before = handle.state();
+	const stage = handle.stage;
+	stage.dispatchEvent("wheel", { clientX: 100, clientY: 100, deltaY: -1, preventDefault() {} });
+	const after = handle.state();
+	assert.equal(after.scale, 1.25);
+	assert.equal((100 - after.x) / after.scale, (100 - before.x) / before.scale, "the point under the pointer stays put");
+	assert.equal((100 - after.y) / after.scale, (100 - before.y) / before.scale);
+	handle.close();
+});
+
+test("a page zoom change resizes the overlay instead of restarting it", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	mount(environment, client);
+	const handle = client.__test.openViewer({ svg: '<svg viewBox="0 0 400 300"></svg>', code: "graph TD; A-->B", theme: "light" });
+	const overlay = environment.document.body.children.at(-1);
+	environment.state.innerWidth = 960;
+	environment.state.innerHeight = 600;
+	environment.window.dispatchEvent({ type: "dsh-handy-toolkits:zoom", detail: 1.5 });
+	assert.equal(overlay.style.width, "960px");
+	assert.equal(overlay.style.height, "600px");
+	handle.close();
+});
+
 test("the chords do not steal the built-in font-size commands", async () => {
 	const environment = createEnvironment();
 	const client = await loadClient(environment);
@@ -768,6 +884,16 @@ async function flush() {
 }
 
 /** Read the text a rendered tree would show. */
+function actionOf(node, action) {
+	if (node === undefined || node === null) return undefined;
+	if (node.attributes?.["data-viewer-action"] === action) return node;
+	for (const child of node.children ?? []) {
+		const found = actionOf(child, action);
+		if (found !== undefined) return found;
+	}
+	return undefined;
+}
+
 function textOf(node) {
 	if (node === undefined || node === null) return "";
 	if (typeof node === "string" || typeof node === "number") return String(node);
