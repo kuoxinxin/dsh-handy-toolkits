@@ -1,12 +1,15 @@
 # dsh-handy-toolkits
 
-A DeepSeek Harness plugin package. It ships two toolkits:
+A DeepSeek Harness plugin package. It ships three toolkits:
 
 1. **Whole-page zoom** — the desktop window has no page zoom of its own (its
    `Cmd/Ctrl` `+` / `-` chords step font sizes), so this toolkit scales the
    document root and remembers the level.
 2. **Copy on select** — dragging over a reply in the chat puts the text on the
    system clipboard immediately, with a short confirmation.
+3. **Mermaid diagrams** — a ` ```mermaid ` fence in a reply is drawn as the
+   diagram instead of a wall of highlighted text. The engine ships inside the
+   plugin, so nothing is fetched at runtime.
 
 ## Whole-page zoom
 
@@ -40,6 +43,35 @@ when the clipboard is not reachable.
   (or denied) it falls back to `document.execCommand("copy")` on the live
   selection, then on a scratch node.
 - `Cmd/Ctrl + C` still works as before — this only removes the second step.
+
+## Mermaid diagrams
+
+A fence tagged `mermaid` renders as the diagram itself:
+
+````text
+```mermaid
+graph TD
+  A[Start] --> B{Ready?}
+  B -->|yes| C[Done]
+  B -->|no| A
+```
+````
+
+- Any diagram mermaid supports works (flowchart, sequence, class, state, ER,
+  gantt, pie, mindmap, timeline …), in the chat transcript and in the history of
+  reloaded sessions.
+- The source stays available: an unparseable fence keeps its code block and adds
+  one line with the reason (`Mermaid: Parse error on line 2`), and a fence that
+  has not finished streaming is left as code until the turn ends.
+- The diagram follows the app theme — switching light/dark redraws it — and it
+  scales with the whole-page zoom like any other content.
+- Mermaid runs with `securityLevel: "strict"`, so HTML inside labels is not
+  evaluated. Labels are still text from the model: treat a diagram as untrusted
+  content, like any other reply.
+- The engine (mermaid 11.17.2, `dist/mermaid.min.js`) is gzipped and stored in
+  `lib/client.js`; the app downloads it once with the bundle (~1 MB over the
+  wire, cached immutably per revision) and the browser only inflates and runs it
+  when the first `mermaid` fence appears.
 
 ## Install
 
@@ -100,7 +132,15 @@ index for the Discover page, or a PR to `awesome-dsh-plugin`).
 ## Test
 
 ```sh
-npm test        # node --test: chords, persistence, clamping, coordinate shim, copy, scope, teardown
+npm test        # node --test: chords, persistence, clamping, coordinate shim, copy, scope, fence layer, teardown
+```
+
+Refresh the vendored engine after a mermaid release:
+
+```sh
+node scripts/vendor-mermaid.mjs            # 11.17.2, the pinned version
+node scripts/vendor-mermaid.mjs 11.18.0    # another version from npm
+node scripts/vendor-mermaid.mjs ./mermaid.min.js
 ```
 
 ## Verify
@@ -114,6 +154,9 @@ npm test        # node --test: chords, persistence, clamping, coordinate shim, c
    instead of hanging off screen.
 5. Drag across a reply in the transcript: a `已复制` / `Copied` readout appears
    and `Cmd/Ctrl + V` elsewhere pastes that text.
+6. Ask the agent for a mermaid diagram, or paste one as a reply: the fence turns
+   into a drawn diagram, and switching the app between light and dark redraws it
+   in the new palette.
 
 Screenshots from that check (headless Chromium, real GUI, 1440×900): `docs/zoom-100.png`,
 `docs/zoom-150.png`, `docs/zoom-200.png`.
@@ -122,7 +165,7 @@ Screenshots from that check (headless Chromium, real GUI, 1440×900): `docs/zoom
 
 - `lib/index.js` — host half, an empty `apply()`; it exists so the Loader has an
   enabled row.
-- `lib/client.js` — browser half, two toolkits sharing one bundle and one
+- `lib/client.js` — browser half, three toolkits sharing one bundle and one
   readout node. The zoom toolkit restores the stored level, sets
   `document.documentElement.style.zoom`, and installs a capturing `keydown`
   listener; the copy toolkit installs a capturing `pointerup` listener on
@@ -147,6 +190,16 @@ Screenshots from that check (headless Chromium, real GUI, 1440×900): `docs/zoom
   `visualViewport.width`/`height` — so the app measures and places in one space,
   the same one native page zoom exposes. Every patch is undone at 100% and on
   teardown.
+- **Mermaid fence layer.** The chat asks `conversation.chat.markdown.fence` for a
+  component around every code fence, keyed on the fence language; the plugin
+  registers one layer with `key: "mermaid"` through `ctx.slots.inject`. The layer
+  gets `lang`, `code`, `streaming` and the plain code block as `children`: it
+  renders `children` while streaming or when the engine rejects the diagram, and
+  otherwise a `div` whose `dangerouslySetInnerHTML` holds the engine's SVG. One
+  engine load is shared by every diagram on the page; a `MutationObserver` on
+  `body[data-ds-dark-theme]` starts a redraw from `componentDidUpdate`, because
+  React batches `setState` — drawing inside the theme callback would still read
+  the theme that was just replaced.
 
 ## Troubleshooting
 
@@ -172,6 +225,15 @@ Screenshots from that check (headless Chromium, real GUI, 1440×900): `docs/zoom
   `./plugins/...` against the profile directory, so the file must be at
   `~/.dsh/profiles/desktop/plugins/dsh-handy-toolkits/lib/index.js` (a directory or a
   bare `index.js` will not resolve).
+- **A `mermaid` fence stays a code block** — the turn is still streaming (the
+  diagram appears when it ends), the diagram has a syntax error (one line names
+  the reason under the code block), or the layer never mounted (check 设置 → 插件
+  for a load error). A very heavy diagram can also fail on the engine side; the
+  message is shown verbatim.
+- **The diagram is bigger/smaller than the text around it** — mermaid sizes
+  labels with its own font stack; the layer passes `fontFamily: "inherit"` so the
+  SVG follows the app's font settings, and the whole diagram scales with page
+  zoom like any other content.
 - **Content runs off the right edge** — this is real zoom, not a smaller layout
   viewport: at 200% on a narrow window the UI legitimately needs more room. Zoom
   out, widen the window, or hide the sidebar.

@@ -1,7 +1,7 @@
 {
   "name": "dsh-handy-toolkits",
-  "version": "0.2.1",
-  "description": "Handy DeepSeek Harness GUI toolkits: whole-page zoom (Cmd/Ctrl + Shift + = / - / 0) and copy-on-select in the chat transcript.",
+  "version": "0.3.0",
+  "description": "Handy DeepSeek Harness GUI toolkits: whole-page zoom (Cmd/Ctrl + Shift + = / - / 0), copy-on-select in the chat transcript, and Mermaid diagrams rendered inline from ```mermaid fences.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -14,7 +14,8 @@
     "lib/index.js",
     "cordis.patch.yml",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "scripts/vendor-mermaid.mjs"
   ],
   "engines": {
     "node": "^22.19.0 || >=24.0.0",
@@ -27,6 +28,9 @@
     "plugin",
     "toolkit",
     "zoom",
+    "mermaid",
+    "diagram",
+    "markdown",
     "ui"
   ],
   "scripts": {
@@ -37,7 +41,10 @@
       "patch": "./cordis.patch.yml"
     },
     "client": {
-      "platform": "web"
+      "platform": "web",
+      "inject": [
+        "slots"
+      ]
     }
   },
   "license": "MIT",

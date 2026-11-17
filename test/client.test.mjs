@@ -1,6 +1,7 @@
 // Unit test for dsh-handy-toolkits/lib/client.js with a stubbed browser.
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { gzipSync } from "node:zlib";
 
 const clientUrl = new URL("../lib/client.js", import.meta.url).href;
 
@@ -70,16 +71,28 @@ function createEnvironment() {
 		configurable: true,
 		get: () => state.lang
 	});
+	/** Attribute bag shared by `body` and `head`; the theme rides on a body attribute. */
+	const attributes = new Map();
 	const body = {
 		appendChild(node) {
 			appended.push(node);
 			node.isConnected = true;
 			return node;
+		},
+		hasAttribute: (name) => attributes.has(name),
+		getAttribute: (name) => attributes.get(name) ?? null,
+		setAttribute(name, value) {
+			attributes.set(name, String(value));
+		},
+		removeAttribute(name) {
+			attributes.delete(name);
 		}
 	};
+	const head = { ...body, appendChild: body.appendChild };
 	const document = {
 		documentElement,
 		body,
+		head,
 		createElement(tag) {
 			return {
 				tagName: String(tag).toUpperCase(),
@@ -172,13 +185,121 @@ function createEnvironment() {
 			}
 		}
 	});
-	return { window, document, listeners, documentListeners, store, style, appended, timers, state };
+	const observers = [];
+	globalThis.MutationObserver = class MutationObserver {
+		constructor(callback) {
+			this.callback = callback;
+			this.active = true;
+			observers.push(this);
+		}
+		observe(target, options) {
+			this.target = target;
+			this.options = options;
+		}
+		disconnect() {
+			this.active = false;
+		}
+	};
+	return {
+		window,
+		document,
+		listeners,
+		documentListeners,
+		store,
+		style,
+		appended,
+		timers,
+		state,
+		observers
+	};
+}
+
+/** Flip the app's light/dark body attribute and notify the observers watching it. */
+function setTheme(environment, dark) {
+	const body = environment.document.body;
+	if (dark) body.setAttribute("data-ds-dark-theme", "");
+	else body.removeAttribute("data-ds-dark-theme");
+	for (const observer of environment.observers) {
+		if (observer.active) observer.callback([], observer);
+	}
+}
+
+/**
+ * The client runtime's `react` peer, reduced to what the fence layer uses: a
+ * class with `setState` and an element factory that keeps props and children.
+ *
+ * Updates are batched into a microtask and followed by
+ * `componentDidUpdate(previousProps, previousState)`, the way React 18 behaves.
+ * An unbatched fake would apply `setState` before the next line runs and hide
+ * ordering bugs that the real app shows.
+ */
+function createFakeReact() {
+	const createElement = (type, props, ...children) => ({
+		type,
+		props: { ...(props ?? {}), children: children.length <= 1 ? children[0] : children }
+	});
+	class Component {
+		constructor(props) {
+			this.props = props;
+			this.state = {};
+			this.patch = null;
+			this.scheduled = false;
+			this.unmounted = false;
+			const onUnmount = this.componentWillUnmount;
+			if (typeof onUnmount === "function") {
+				this.componentWillUnmount = () => {
+					this.unmounted = true;
+					onUnmount.call(this);
+				};
+			}
+		}
+		setState(next) {
+			const patch = typeof next === "function" ? next(this.state, this.props) : next;
+			this.patch = { ...(this.patch ?? {}), ...patch };
+			if (this.scheduled) return;
+			this.scheduled = true;
+			Promise.resolve().then(() => {
+				this.scheduled = false;
+				if (this.patch === null || this.unmounted) return;
+				const previousProps = this.props;
+				const previousState = this.state;
+				const applied = this.patch;
+				this.patch = null;
+				this.state = { ...this.state, ...applied };
+				if (typeof this.componentDidUpdate === "function") this.componentDidUpdate(previousProps, previousState);
+			});
+		}
+	}
+	return { Component, createElement, Fragment: "Fragment" };
+}
+
+const fakeReact = createFakeReact();
+
+/** A stand-in mermaid engine; `__test.setEngine` swaps it for the bundled one. */
+const mermaidApi = { render: "the real engine" };
+
+function createFakeEngine(overrides = {}) {
+	const calls = { load: 0, render: [] };
+	return {
+		calls,
+		async load() {
+			calls.load += 1;
+			return mermaidApi;
+		},
+		async render(engine, code, theme) {
+			assert.equal(engine, mermaidApi, "the layer hands the loaded engine back");
+			calls.render.push({ code, theme });
+			return `<svg data-theme="${theme}">${code}</svg>`;
+		},
+		...overrides
+	};
 }
 
 /** Fresh module instance per test: the bundle caches module state. */
 async function loadClient(environment) {
 	await import(`${clientUrl}?n=${Math.random()}`);
 	const client = environment.window.entry.factory((name) => {
+		if (name === "react") return fakeReact;
 		throw new Error(`unexpected require(${name})`);
 	});
 	return client;
@@ -230,15 +351,31 @@ function selectText(environment, text, { zone = "transcript", editable = false }
 /** Mount the plugin and return its disposer. */
 function mount(environment, client) {
 	const disposers = [];
+	const registrations = [];
+	const injected = [];
 	client.apply({
 		effect(callback, label) {
 			assert.match(label, /^dsh-handy-toolkits: /);
 			disposers.push(callback());
+		},
+		slots: {
+			inject(name, callback) {
+				injected.push(name);
+				const dispose = callback();
+				return () => dispose?.();
+			},
+			register(options, component) {
+				registrations.push({ options, component });
+				return () => {};
+			}
 		}
 	});
-	return () => {
-		for (const dispose of disposers) dispose();
+	const dispose = () => {
+		for (const entry of disposers) entry();
 	};
+	dispose.registrations = registrations;
+	dispose.injected = injected;
+	return dispose;
 }
 
 /** Let the async clipboard write and the deferred pass finish. */
@@ -483,4 +620,171 @@ test("teardown removes every patched accessor", async () => {
 	assert.equal(environment.window.innerWidth, 1440);
 	assert.equal(environment.window.visualViewport.width, 1440);
 	assert.equal(environment.style.get("zoom"), undefined);
+});
+
+/** Let the asynchronous fence render finish. */
+async function flush() {
+	for (let round = 0; round < 6; round += 1) await new Promise((resolve) => setImmediate(resolve));
+}
+
+/** Read the text a rendered tree would show. */
+function textOf(node) {
+	if (node === undefined || node === null) return "";
+	if (typeof node === "string" || typeof node === "number") return String(node);
+	if (Array.isArray(node)) return node.map(textOf).join("");
+	return textOf(node.props?.children);
+}
+
+/** Mount the registered fence layer and return its React instance. */
+async function mountFence(environment, client, props, engine) {
+	client.__test.setEngine(engine);
+	const dispose = mount(environment, client);
+	const registration = dispose.registrations.find(
+		(entry) => entry.options.name === "conversation.chat.markdown.fence"
+	);
+	assert.ok(registration, "the plugin registers a chat fence layer");
+	const instance = new registration.component(props);
+	instance.componentDidMount();
+	await flush();
+	return { instance, registration, dispose };
+}
+
+test("registers one chat fence layer keyed on the mermaid language", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	assert.deepEqual(client.inject, ["slots"]);
+	const dispose = mount(environment, client);
+	assert.deepEqual(dispose.injected, ["conversation.chat.markdown.fence"]);
+	const [registration] = dispose.registrations;
+	assert.equal(registration.options.key, "mermaid");
+	assert.match(registration.options.id, /^dsh-handy-toolkits/);
+	dispose();
+});
+
+test("a streaming fence keeps the plain code block and skips the engine", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	const engine = createFakeEngine();
+	const { instance } = await mountFence(
+		environment,
+		client,
+		{ code: "graph TD; A-->B", streaming: true, children: "CODE BLOCK" },
+		engine
+	);
+	assert.equal(instance.render(), "CODE BLOCK");
+	assert.deepEqual(engine.calls.render, [], "no diagram is drawn mid-stream");
+	assert.equal(engine.calls.load, 0, "the engine is not even loaded");
+});
+
+test("a finished fence renders into an SVG through the engine", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	const engine = createFakeEngine();
+	const { instance } = await mountFence(
+		environment,
+		client,
+		{ code: "graph TD; A-->B", streaming: false, children: "CODE BLOCK" },
+		engine
+	);
+	const tree = instance.render();
+	assert.match(tree.props.dangerouslySetInnerHTML.__html, /^<svg data-theme="light">/);
+	assert.match(tree.props.dangerouslySetInnerHTML.__html, /graph TD/);
+	assert.deepEqual(engine.calls.render, [{ code: "graph TD; A-->B", theme: "light" }]);
+});
+
+test("a broken diagram falls back to the code block and names the error", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	const engine = createFakeEngine({
+		async render() {
+			throw new Error("Parse error on line 2");
+		}
+	});
+	const { instance } = await mountFence(
+		environment,
+		client,
+		{ code: "graph TD; !!!", streaming: false, children: "CODE BLOCK" },
+		engine
+	);
+	const tree = instance.render();
+	assert.equal(textOf(tree).includes("CODE BLOCK"), true, "the plain code block stays visible");
+	assert.equal(textOf(tree).includes("Parse error on line 2"), true, "the reason is shown");
+	assert.equal(textOf(tree).includes("<svg"), false);
+});
+
+test("the engine is loaded once for every diagram on the page", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	const engine = createFakeEngine();
+	const { registration } = await mountFence(
+		environment,
+		client,
+		{ code: "graph TD; A-->B", streaming: false, children: null },
+		engine
+	);
+	const second = new registration.component({ code: "graph TD; B-->C", streaming: false, children: null });
+	second.componentDidMount();
+	await flush();
+	assert.equal(engine.calls.load, 1, "the mermaid module is decoded once");
+	assert.equal(engine.calls.render.length, 2);
+});
+
+test("a fence renders when its stream ends", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	const engine = createFakeEngine();
+	const props = { code: "graph TD; A-->B", streaming: true, children: "CODE BLOCK" };
+	const { instance } = await mountFence(environment, client, props, engine);
+	assert.equal(instance.render(), "CODE BLOCK");
+	const previousState = instance.state;
+	instance.props = { ...props, streaming: false };
+	instance.componentDidUpdate(props, previousState);
+	await flush();
+	assert.match(instance.render().props.dangerouslySetInnerHTML.__html, /^<svg/);
+});
+
+test("switching the app to dark mode redraws the diagram dark", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	const engine = createFakeEngine();
+	const { instance } = await mountFence(
+		environment,
+		client,
+		{ code: "graph TD; A-->B", streaming: false, children: "CODE BLOCK" },
+		engine
+	);
+	assert.equal(engine.calls.render.at(-1).theme, "light");
+	setTheme(environment, true);
+	const whilePending = instance.render();
+	assert.match(
+		whilePending.props.dangerouslySetInnerHTML.__html,
+		/data-theme="light"/,
+		"the finished diagram stays on screen while the new theme is drawn"
+	);
+	await flush();
+	assert.equal(engine.calls.render.at(-1).theme, "dark");
+	assert.match(instance.render().props.dangerouslySetInnerHTML.__html, /data-theme="dark"/);
+});
+
+test("unmounting the diagram stops watching the theme", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	const engine = createFakeEngine();
+	const { instance } = await mountFence(
+		environment,
+		client,
+		{ code: "graph TD; A-->B", streaming: false, children: null },
+		engine
+	);
+	assert.equal(environment.observers.some((observer) => observer.active), true);
+	instance.componentWillUnmount();
+	assert.equal(environment.observers.every((observer) => !observer.active), true);
+});
+
+test("the vendored payload decodes back to the mermaid source", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	const source = '"use strict";globalThis.mermaid = { diagram: "«中文»" };';
+	const encoded = gzipSync(Buffer.from(source, "utf8"), { level: 9 }).toString("base64");
+	assert.equal(await client.__test.decodePayload(encoded), source);
 });
