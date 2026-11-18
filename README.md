@@ -77,15 +77,19 @@ graph TD
 
 Hover a diagram (or tab onto it) and two actions appear in its corner:
 
-- **Copy ▾** — `PNG`, `SVG`, or the mermaid source. PNG and SVG are written to the
+- **Copy** (the clipboard icon with a caret) — `PNG`, `SVG`, or the mermaid source. PNG and SVG are written to the
   clipboard as images, so a paste into a document, a chat, or a slide deck lands
   as a picture; the source is copied in a fenced block so it can be edited again.
   A readout confirms which format went out (`已复制 PNG` / `Copied PNG`), and says
   why when the browser refuses the clipboard.
-- **Full screen** — opens the diagram in a viewer over the app: `+` / `−` step the
-  scale, the percentage button returns to 100%, `适应` fits the window, the wheel
-  zooms around the pointer, dragging pans, a double-click toggles fit and 100%,
-  and `Esc` (or a click beside the diagram) closes it.
+- **Full screen** (the expanding-corners icon) — opens the diagram in a viewer
+  over the app: `+` / `−` step the scale, the percentage button returns to 100%,
+  the inward-corners icon fits the window, the wheel zooms around the pointer,
+  dragging pans, a double-click toggles fit and 100%, and `Esc` (or a click
+  beside the diagram) closes it.
+
+Every control is an icon with the same words in its tooltip and accessible name,
+so nothing depends on hover text being read.
 
 Details worth knowing:
 
@@ -274,7 +278,7 @@ Screenshots from that check (headless Chromium, real GUI, 1440×900): `docs/zoom
 - **Content runs off the right edge** — this is real zoom, not a smaller layout
   viewport: at 200% on a narrow window the UI legitimately needs more room. Zoom
   out, widen the window, or hide the sidebar.
-- **No Copy / Full screen buttons on a diagram** — the actions appear on hover or
+- **No Copy / Full screen buttons on a diagram** — the two icon buttons appear on hover or
   keyboard focus; if they never show, the layer is the older 0.3.0 build (check
   the version in 设置 → 插件) or the SVG fell back to a code block because the
   diagram failed to parse.

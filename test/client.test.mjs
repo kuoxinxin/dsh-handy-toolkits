@@ -760,6 +760,39 @@ test("the viewer keeps the theme it opened with", async () => {
 	assert.equal(environment.state.fills.at(-1).fillStyle, "#ffffff");
 });
 
+test("the fence actions are icons with accessible names", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	const engine = createFakeEngine();
+	const { instance } = await mountFence(environment, client, { code: "graph TD; A-->B", streaming: false, children: "CODE" }, engine);
+	const copy = findClass(instance.render(), "dsh-handy-toolkits-mermaid-copy");
+	const expand = findClass(instance.render(), "dsh-handy-toolkits-mermaid-expand");
+	for (const [button, name] of [
+		[copy, /copy diagram/i],
+		[expand, /full screen/i]
+	]) {
+		const html = button.props.dangerouslySetInnerHTML.__html;
+		assert.match(html, /^<svg/);
+		assert.match(html, /aria-hidden="true"/);
+		assert.equal(button.props.children, undefined, "no words are left in the button");
+		assert.match(button.props["aria-label"], name);
+		assert.equal(button.props.title, button.props["aria-label"], "the tooltip repeats the name");
+	}
+});
+
+test("the fit control in the viewer is an icon", async () => {
+	const environment = createEnvironment();
+	const client = await loadClient(environment);
+	mount(environment, client);
+	const handle = client.__test.openViewer({ svg: '<svg viewBox="0 0 400 300"></svg>', code: "graph TD; A-->B", theme: "light" });
+	const fit = actionOf(handle.overlay, "fit");
+	assert.match(fit.innerHTML, /^<svg/);
+	assert.equal(fit.textContent, "");
+	assert.equal(fit.attributes["aria-label"], "Fit to window");
+	assert.equal(actionOf(handle.overlay, "scale").textContent, "100%", "the percentage stays a number");
+	handle.close();
+});
+
 test("the copy menu shows one toast per format and reports failures", async () => {
 	const environment = createEnvironment();
 	const client = await loadClient(environment);
