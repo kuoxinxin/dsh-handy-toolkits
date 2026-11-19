@@ -3,9 +3,9 @@ name: publish
 # Publishes to npm through npm's Trusted Publishing (OIDC): no tokens, no OTP.
 # Requires a trusted publisher on npmjs.com pointing at this repository and this
 # workflow file name.
+# Tag pushes are handled by release.yml until the npm trusted publisher exists.
+# Re-add `push: tags: ["v*"]` here once npm trust is configured.
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
