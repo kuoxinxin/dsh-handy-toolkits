@@ -25,10 +25,12 @@ jobs:
         run: npm test
 
       - name: Pack
-        run: npm pack
+        run: |
+          npm pack
+          mv ./*.tgz dsh-handy-toolkits.tgz
 
       - name: Publish release asset
         uses: softprops/action-gh-release@v2
         with:
-          files: "*.tgz"
+          files: dsh-handy-toolkits.tgz
           generate_release_notes: true
