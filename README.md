@@ -159,9 +159,21 @@ printf '%s\n' '- insert:' '    - id: dsh-handy-toolkits' '      name: "./plugins
 Removes the Loader entry (leaving a `.bak` copy of the patch file) and deletes
 the plugin directory. Quit the app first.
 
-The package is also a DSH **bundle** (`dsh.bundle.patch` → `cordis.patch.yml`),
-so once it is on npm it installs the normal way — Plugins → Add plugin → the
-package name — instead of through `install.sh`.
+### From npm
+
+The package is published as [`dsh-handy-toolkits`](https://www.npmjs.com/package/dsh-handy-toolkits)
+(`dsh.bundle.patch` → `cordis.patch.yml`), so it installs without cloning the repo:
+
+- **Plugins → Add plugin → `dsh-handy-toolkits`** — the GUI registers the package as a
+  profile bundle, so it is loaded on the next start.
+- **CLI** — `dsh plugin --profile desktop add dsh-handy-toolkits` (quit the app first).
+  `dsh plugin` forwards its arguments to pnpm inside the profile, so it installs the
+  files but does **not** add the package to `dsh.profile.bundles`; add the name there
+  yourself, or the plugin will be installed without ever loading.
+
+A tagged release also carries the same tarball at
+`https://github.com/kuoxinxin/dsh-handy-toolkits/releases/latest/download/dsh-handy-toolkits.tgz`,
+which the market entry points at so installs do not depend on the npm registry.
 
 ## Publish
 

@@ -69,13 +69,38 @@ npm pack --dry-run
 - 有 scope 的包名（`@you/dsh-handy-toolkits`）在 GUI 里同样可以输入，`@` 开头不冲突。
 - 版本一次一发不可撤回（只能 `npm unpublish` 24h 内且被依赖就不行）。补丁先发 `0.1.1`，别改 `0.1.0`。
 
+### 发布时实际会遇到的几件事（0.4.1 实测）
+
+- **账号开了 WebAuthn 安全密钥时，`--otp=` 永远不可能成功**。npm 的 `otplease()` 只处理 6 位 TOTP，安全密钥要靠浏览器弹窗，非 TTY 的 CLI 触发不了，所以每次 `npm publish` / `npm trust` 都是
+  `E403 … Two-factor authentication or granular access token with bypass 2fa enabled is required`。
+  可行路径只有一条：在 **Tokens → Granular Access Token** 里勾 **Bypass two-factor authentication**（Organizations 选 **No access**，否则报 "You must select at least one organization…"），用这个 token 发布。
+- **发布成功也可能先不完整**：新包第一次发布会返回 `202 Accepted` 和
+  `notice Your package is being processed and may take a few minutes to become available`，
+  此时 registry 上先出现占位版本 `0.0.0-stage`，自己能访问到的 `<包>-<版本>.tgz` 还是 **404**。这不是 staging 审核，也没有东西需要批准——等几分钟（实测约 2 分钟）就变成 200。**千万不要因为 404 就改版本号重发**，那会多出一个永远需要收尾的版本。
+- **bypass token 只能发布、不能撤回**：`npm unpublish` 会报 `E403 … Granular access tokens that bypass two-factor authentication may not perform this action`。发错版本只能用 `npm dist-tag add <pkg>@<正确版本> latest` 纠正 `latest`，再 `npm deprecate` 标记错误版本。
+- 发完用这三条确认（不需要浏览器）：
+  ```sh
+  npm view dsh-handy-toolkits version          # 期望 latest 版本号
+  npm view dsh-handy-toolkits dist-tags        # latest 指向对的版本
+  curl -sI "$(npm view dsh-handy-toolkits dist.tarball | tr -d '\"')" | head -1   # 期望 200
+  ```
+
 ## 4. 别人怎么装
 
-- **插件页**：插件 → 已安装 → 添加插件 → 输入 `dsh-handy-toolkits`（或 `@you/dsh-handy-toolkits@0.1.0`）。
-- **CLI**：`dsh plugin --profile desktop add dsh-handy-toolkits`（需要 App 完全退出）。
+- **插件页（推荐）**：插件 → 已安装 → 添加插件 → 输入 `dsh-handy-toolkits`（或 `@you/dsh-handy-toolkits@0.1.0`）。GUI 装完会调用 `reconcile()`，把包登记进 profile 的 `dsh.profile.bundles`，所以重启后插件就在图里。
+- **CLI**：`dsh plugin --profile desktop add dsh-handy-toolkits`（需要 App 完全退出）。注意 `dsh plugin` 只是**把参数转发给 profile 目录里的 pnpm**（见 `dsh plugin --help`），它会把包装进 `node_modules` 并写进 `dependencies`，但**不会**把包加进 `dsh.profile.bundles`——少了这一步插件装上了也不会加载。用 CLI 时要自己补一行：
+
+  ```jsonc
+  // ~/.dsh/profiles/desktop/package.json
+  "dsh": { "profile": { "bundles": [ ... , "dsh-handy-toolkits" ] } }
+  ```
 - 也接受 `git+https://...`、`https://.../x.tgz`、本地绝对路径——但只有 npm/Git/tarball 才具备"更新"语义。
 
 装好那一刻不会自动启用（除非点「立即启用」）；启用后重启生效。
+
+> 自查"包本身有没有问题"：把名字手动加进 `dsh.profile.bundles` 后启动，Loader 图里应出现
+> `{"id":"dsh-handy-toolkits","url":"plugins/??dsh-handy-toolkits/client.js&rev=…","inject":["slots"]}`。
+> 图里有行 = 包内容与清单都对；没行 = 包没问题、是 profile 没登记。
 
 ## 5. 让插件被"发现"
 
